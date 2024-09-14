@@ -1,7 +1,7 @@
 package main
 
 import (
-	"github.com/mkaganm/outdatedcheck/pkg/outdatedcheck"
+	"github.com/mkaganm/outdatedcheck/pkg/analyzer"
 	"golang.org/x/tools/go/analysis"
 )
 
@@ -11,6 +11,6 @@ type analyzerPlugin struct{}
 
 func (a analyzerPlugin) GetAnalyzers() []*analysis.Analyzer {
 	return []*analysis.Analyzer{
-		outdatedcheck.Analyzer,
+		analyzer.Analyzer,
 	}
 }

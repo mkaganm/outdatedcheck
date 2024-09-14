@@ -1,4 +1,4 @@
-package outdatedcheck
+package analyzer
 
 import (
 	"bytes"
