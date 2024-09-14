@@ -1,4 +1,3 @@
-// mymodulelinter/main.go
 package main
 
 import (
@@ -9,9 +8,11 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"gopkg.in/yaml.v2"
+	"github.com/golangci/golangci-lint/pkg/lint"
+	"github.com/golangci/golangci-lint/pkg/result"
 )
 
+// Go modüllerini temsil eden Module yapısı
 type Module struct {
 	Path    string
 	Version string
@@ -21,54 +22,34 @@ type Module struct {
 	}
 }
 
-const (
-	red   = "\033[31m"
-	reset = "\033[0m"
-)
-
+// Konfigürasyonları tutan Config yapısı
 type Config struct {
 	ModulePrefix string `yaml:"module_prefix"`
 }
 
-func loadConfig() (*Config, error) {
-	file, err := os.Open(".mymodulelintrc.yaml")
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
-
-	var config Config
-	decoder := yaml.NewDecoder(file)
-	err = decoder.Decode(&config)
-	if err != nil {
-		return nil, err
-	}
-
-	return &config, nil
+// lint.Runner arayüzünü uygulamak için kullanılan CustomLinter yapısı
+type CustomLinter struct {
+	Config Config
 }
 
-func run() error {
-	config, err := loadConfig()
-	if err != nil {
-		return fmt.Errorf("error loading config: %v", err)
-	}
+// Run metodu lint.Runner arayüzünü uygular
+func (c *CustomLinter) Run(ctx *lint.GoLintContext) ([]*result.Issue, error) {
+	var issues []*result.Issue
 
-	// Run the go list -u -m -json all command
+	// Modül bilgilerini almak için "go list -u -m -json all" komutunu çalıştır
 	cmd := exec.Command("go", "list", "-u", "-m", "-json", "all")
 	output, err := cmd.Output()
 	if err != nil {
-		return fmt.Errorf("error running go list command: %v", err)
+		return nil, fmt.Errorf("go list komutu çalıştırılırken hata oluştu: %v", err)
 	}
 
-	hasNewVersion := false
-
-	// Create a tab writer
+	// Tablo yazıcıyı oluştur
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 1, ' ', tabwriter.Debug)
 
-	// Table headers
+	// Tablo başlıkları
 	fmt.Fprintln(w, "MODULE\tVERSION\tNEW VERSION\tSTATUS")
 
-	// Decode the modules from JSON
+	// JSON formatında modülleri çözümle
 	dec := json.NewDecoder(strings.NewReader(string(output)))
 	for {
 		var mod Module
@@ -76,33 +57,40 @@ func run() error {
 			break
 		}
 
-		// Check only modules starting with the configured prefix
-		if strings.HasPrefix(mod.Path, config.ModulePrefix) {
+		// Modülleri kontrol et; eğer önek (prefix) yapılandırılmışsa, sadece o önekle başlayan modülleri kontrol et, aksi halde hepsini kontrol et
+		if c.Config.ModulePrefix == "" || strings.HasPrefix(mod.Path, c.Config.ModulePrefix) {
 			if mod.Update != nil {
-				fmt.Fprintf(w, "%s\t%s\t%s\tOutdated\n", mod.Path, mod.Version, mod.Update.Version)
-				hasNewVersion = true
+				fmt.Fprintf(w, "%s\t%s\t%s\tGüncel Değil\n", mod.Path, mod.Version, mod.Update.Version)
+				issues = append(issues, &result.Issue{
+					FromLinter: "MyCustomLinter",
+					Text:       fmt.Sprintf("Modül %s güncel değil. Mevcut versiyon: %s, Yeni versiyon: %s", mod.Path, mod.Version, mod.Update.Version),
+					Pos:        lint.Position{Filename: mod.Path, Line: 0},
+					Severity:   lint.SeverityWarning,
+				})
 			} else {
-				fmt.Fprintf(w, "%s\t%s\t-\tUp-to-date\n", mod.Path, mod.Version)
+				fmt.Fprintf(w, "%s\t%s\t-\tGüncel\n", mod.Path, mod.Version)
 			}
 		}
 	}
 
-	// Flush the table writer
+	// Tablo yazıcıyı temizle
 	w.Flush()
 
-	if hasNewVersion {
-		fmt.Println(red + "There are outdated modules." + reset)
-		return fmt.Errorf("there are outdated modules")
-	} else {
-		fmt.Println("All modules are up-to-date.")
-	}
-
-	return nil
+	return issues, nil
 }
 
-func main() {
-	if err := run(); err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
+// loadConfig fonksiyonu ayarları ortam değişkenlerinden veya .golangci.yaml dosyasından yükler
+func loadConfig() *CustomLinter {
+	// Ortam değişkeninden (varsa) modül önekini yükle
+	modulePrefix := os.Getenv("GOLANGCI_LINT_PLUGIN_PREFIX")
+
+	// Yüklenen yapılandırma ile CustomLinter döndür
+	return &CustomLinter{
+		Config: Config{
+			ModulePrefix: modulePrefix,
+		},
 	}
 }
+
+// Eklentiyi dışa aktar
+var Plugin lint.Runner = loadConfig()
